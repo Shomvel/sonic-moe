@@ -297,6 +297,20 @@ class MoE(nn.Module):
         selected_experts: torch.Tensor,
         kernel_backend_moe: KernelBackendMoE,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        if kernel_backend_moe in (KernelBackendMoE.deepgemm_bf16, KernelBackendMoE.deepgemm_fp8):
+            from .deepgemm import deepgemm_swiglu
+
+            if self.activation_function != ActivationType.SWIGLU:
+                raise ValueError("DeepGEMM training backend currently supports interleaved SwiGLU")
+            output = deepgemm_swiglu(
+                hidden_states, self.c_fc.weight, self.c_proj.weight,
+                router_weights, selected_experts,
+                bias1=self.c_fc.bias, bias2=self.c_proj.bias,
+                precision="fp8" if kernel_backend_moe == KernelBackendMoE.deepgemm_fp8 else "bf16",
+            )
+            frequency = selected_experts.flatten().bincount(minlength=self.num_experts).to(torch.int32)
+            return output, frequency
+
         selected_experts = selected_experts.flatten()
 
         with torch.no_grad():
@@ -353,7 +367,7 @@ class MoE(nn.Module):
 
             hidden_states = hidden_states * batch_gates.unsqueeze(-1)
             zeros = torch.zeros((T, self.hidden_size), dtype=torch.float32, device=hidden_states.device)
-            hidden_states = zeros.index_add(0, fan_in_index, hidden_states)
+            hidden_states = zeros.index_add(0, fan_in_index, hidden_states.float())
         else:
             raise ValueError(f"unexpected kernel_backend_moe ({kernel_backend_moe})")
 

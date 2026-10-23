@@ -13,6 +13,8 @@ class KernelBackendMoE(Enum):
     scattermoe = "scattermoe"
     torch = "torch"
     sonicmoe = "sonicmoe"
+    deepgemm_bf16 = "deepgemm_bf16"
+    deepgemm_fp8 = "deepgemm_fp8"
 
 
 class ActivationType(Enum):

@@ -1,0 +1,145 @@
+"""Acceptance and synchronized wall-time benchmark (includes routing and packing)."""
+import argparse
+import importlib.metadata
+import json
+import math
+from pathlib import Path
+import statistics
+import sys
+import time
+
+import torch
+import google.protobuf
+from google.protobuf.internal.api_implementation import Type
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
+from test_deepgemm_training import validate_case, validate_wrapper, reference, metrics
+from sonicmoe.deepgemm import deepgemm_swiglu
+
+
+def time_training(fn, params, do, iterations):
+    def step():
+        out = fn()
+        torch.autograd.grad(out, params, do)
+    for _ in range(2):
+        step()
+    torch.cuda.synchronize()
+    torch.cuda.reset_peak_memory_stats()
+    initial = torch.cuda.memory_allocated()
+    samples = []
+    for _ in range(3):
+        torch.cuda.synchronize()
+        start = time.perf_counter()
+        for _ in range(iterations):
+            step()
+        torch.cuda.synchronize()
+        samples.append((time.perf_counter() - start) * 1000 / iterations)
+    return {"median_ms": statistics.median(samples), "samples_ms": samples,
+            "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
+            "incremental_peak_bytes": torch.cuda.max_memory_allocated() - initial}
+
+
+def run(output, iterations):
+    output.mkdir(parents=True, exist_ok=True)
+    report = {"environment": {"python": sys.version, "torch": torch.__version__, "cuda": torch.version.cuda,
+              "protobuf": google.protobuf.__version__, "protobuf_backend": Type(),
+              "gpu": torch.cuda.get_device_name(), "capability": torch.cuda.get_device_capability(),
+              "packages": {}}, "numerical": [], "training": [], "benchmarks": []}
+    for package in ("deep-gemm", "quack-kernels", "nvidia-cutlass-dsl",
+                    "nvidia-cutlass-dsl-libs-core", "nvidia-cutlass-dsl-libs-base",
+                    "nvidia-cutlass-dsl-libs-cu13", "pytorch-triton"):
+        try:
+            report["environment"]["packages"][package] = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            pass
+    def save():
+        (output / "results.json").write_text(json.dumps(report, indent=2))
+    save()
+    for precision in ("bf16", "fp8"):
+        for options in ({}, {"bias": True, "skew": True, "zero_scores": True}, {"t": 0}):
+            print("NUMERICAL", precision, options, flush=True)
+            value = validate_case(precision, **options)
+            report["numerical"].append(value)
+            save()
+            print(json.dumps(value), flush=True)
+    # Fixed assignments isolate training drift from discontinuous top-k changes.
+    torch.manual_seed(222)
+    t, d, i, e, k = 256, 256, 512, 4, 2
+    initial = [torch.randn(t,d,device="cuda",dtype=torch.bfloat16)*.5,
+               torch.randn(e,2*i,d,device="cuda",dtype=torch.bfloat16)/math.sqrt(d),
+               torch.randn(e,d,i,device="cuda",dtype=torch.bfloat16)/math.sqrt(i),
+               torch.randn(t,k,device="cuda",dtype=torch.float32)]
+    ids = torch.arange(t*k,device="cuda").view(t,k)%e
+    target = torch.randn(t,d,device="cuda",dtype=torch.float32)*.1
+    final = {}
+    for mode in ("reference", "bf16", "fp8"):
+        x,w1,w2,logits = [v.detach().clone().requires_grad_() for v in initial]
+        optim = torch.optim.SGD([w1,w2,logits],lr=20.)
+        losses=[]
+        for step in range(20):
+            optim.zero_grad(set_to_none=True)
+            s = logits.softmax(-1)
+            y = reference(x,w1,w2,s,ids) if mode == "reference" else deepgemm_swiglu(x,w1,w2,s,ids,precision=mode)
+            loss = (y.float()-target).square().mean()
+            loss.backward()
+            optim.step()
+            losses.append(loss.item())
+        assert all(math.isfinite(v) for v in losses)
+        assert losses[-1] < losses[0], (mode, losses)
+        final[mode] = y.detach()
+        report["training"].append({"mode":mode,"losses":losses})
+        save()
+        print("TRAINING",mode,losses[0],losses[-1],flush=True)
+    report["training_drift"] = {mode:metrics(final[mode],final["reference"]) for mode in ("bf16","fp8")}
+    assert report["training_drift"]["fp8"]["rrmse"] < .15
+    save()
+    from sonicmoe.functional import moe_general_routing_inputs
+    from sonicmoe.enums import ActivationType
+    report["wrapper"] = {mode:validate_wrapper(mode) for mode in ("bf16", "fp8")}
+    save()
+    for t,d,i,e,k in ((512,256,512,4,2),(2048,1024,2048,8,2),(4096,4096,2048,8,2)):
+        torch.manual_seed(11)
+        x = torch.randn(t,d,device="cuda",dtype=torch.bfloat16,requires_grad=True)
+        w1 = (torch.randn(e,2*i,d,device="cuda",dtype=torch.bfloat16)/math.sqrt(d)).requires_grad_()
+        w2 = (torch.randn(e,d,i,device="cuda",dtype=torch.bfloat16)/math.sqrt(i)).requires_grad_()
+        scores = torch.rand(t,k,device="cuda",dtype=torch.float32,requires_grad=True)
+        ids = torch.rand(t,e,device="cuda").topk(k,-1).indices.int()
+        token_ids = torch.arange(t,device="cuda",dtype=torch.int32).repeat_interleave(k)
+        do = torch.randn_like(x)
+        params=[x,w1,w2,scores]
+        shape=dict(t=t,d=d,i=i,e=e,k=k)
+        modes={
+            "sonic_bf16":lambda:moe_general_routing_inputs(
+                x=x, router_scores=scores.flatten(), token_indices=token_ids, expert_indices=ids.flatten(),
+                w1=w1.permute(1,2,0), b1=None, w2=w2.permute(1,2,0), b2=None, E=e,
+                stream_id=torch.cuda.current_stream().cuda_stream, activation_type=ActivationType.SWIGLU)[0],
+            "deepgemm_bf16":lambda:deepgemm_swiglu(x,w1,w2,scores,ids,precision="bf16"),
+            "deepgemm_fp8":lambda:deepgemm_swiglu(x,w1,w2,scores,ids,precision="fp8"),
+        }
+        # Original Sonic is also checked against the same expression before timing.
+        ref = reference(x,w1,w2,scores,ids)
+        sonic = modes["sonic_bf16"]()
+        sm = metrics(sonic,ref)
+        assert sm["rrmse"] < .025, sm
+        rg = torch.autograd.grad(ref,params,do.float())
+        sg = torch.autograd.grad(sonic,params,do)
+        for actual, expected in zip(sg,rg):
+            assert metrics(actual,expected)["rrmse"] < .03
+        del ref,sonic,rg,sg
+        for mode, fn in modes.items():
+            print("BENCHMARK",shape,mode,flush=True)
+            value = {"shape":shape,"mode":mode,**time_training(fn,params,do,iterations)}
+            report["benchmarks"].append(value)
+            save()
+            print(json.dumps(value),flush=True)
+    report["passed"] = True
+    save()
+    print("ACCEPTANCE PASSED",flush=True)
+
+
+if __name__ == "__main__":
+    p=argparse.ArgumentParser()
+    p.add_argument("--output",type=Path,required=True)
+    p.add_argument("--iterations",type=int,default=5)
+    args=p.parse_args()
+    run(args.output,args.iterations)

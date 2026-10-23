@@ -1,0 +1,87 @@
+{
+  "date": "2026-10-23",
+  "source": {
+    "sonic-moe": {
+      "base": "7396f3e604827d8186c2e16e64b28ee33d3defd0",
+      "executed_files_sha256": {
+        "sonicmoe/deepgemm.py": "0a5a8d180130532c9a5ab505d16e26bd2399c78dfd0d4936edd3f46464107dd1",
+        "sonicmoe/moe.py": "977932b9d0960c2ece1c21dbf409b67504c8b270446414caddbae291b6df940b",
+        "sonicmoe/enums.py": "c7c817f2fd586f7aa71b454b10b8df8ccfa41a670845dcf6dbbcf2af5ea3f459",
+        "sonicmoe/__init__.py": "a84f9ca1db8366b2a0e8c1f46781d6e5fac9a2900b38c11e0242706b9170bfa3",
+        "tests/test_deepgemm_training.py": "534017e93bf60afc8be7a9f5a8f1f34b1fddb1456e5f78ca73c7993a614b850e",
+        "benchmarks/deepgemm_training.py": "79c07d1e85700a812148500b5dd91c5abb21f570c91dd20152eb0085ca0b717b"
+      }
+    },
+    "DeepGEMM": {
+      "base": "5081f8513af57e61696de4f4f04b0e707ffb503e",
+      "executed_files_sha256": {
+        "deep_gemm/sonic_training.py": "9389d001adaf752ccc1e903685566fb31d8be7e425337a6812c827b5269146c8",
+        "tests/test_sonic_training.py": "7408a4146be99071ebf20830a5537493d14e604bcdc1a6d01c4628c8288b17a4"
+      }
+    }
+  },
+  "submodules": " f3fde58372d33e9a5650ba7b80fc48b3b49d40c8 third-party/cutlass (v4.2.1)\n 2efdab421e1cfb17fe8bc20e11ca72aa6d0e6c43 third-party/deep_jit (2efdab4)\n",
+  "image": "harbor.local.clusters/bp/weaver-trainer-slim:sonicmoe-exp-20261023-r3@sha256:313bd046ab3e72cc6be80abea7baefd1845160020a638db74f489d5975bf308d",
+  "resources": {
+    "gpu": 1,
+    "cpu": 8,
+    "ram_gib": 96,
+    "shm_gib": 8,
+    "deadline_seconds": 3600
+  },
+  "job": [
+    {
+      "name": "job-6df3e9008589-20261023092822",
+      "user_def_name": "sonic-deepgemm-hopper-20261023-r5",
+      "status": "Completed",
+      "ready_status": "0/1",
+      "namespace": "qiji",
+      "job_creator": "linlizhi",
+      "user_gpu": 1
+    }
+  ],
+  "worker_exit_code": 0,
+  "cleanup": [],
+  "adapters": {
+    "bf16": {
+      "m_rrmse": 0.001658300869166851,
+      "wgrad_rrmse": 2.073197862273446e-07
+    },
+    "fp8": {
+      "m_rrmse": 0.036952342838048935,
+      "wgrad_rrmse": 0.02721964754164219
+    }
+  },
+  "base_runtime": {
+    "python": "3.12.3 (main, Aug 14 2025, 17:47:21) [GCC 13.3.0]",
+    "torch": "2.10.0a0+b558c986e8.nv25.11",
+    "cuda": "13.0",
+    "protobuf": "6.33.5",
+    "protobuf_backend": "upb",
+    "gpu": "NVIDIA H100 80GB HBM3",
+    "capability": [
+      9,
+      0
+    ],
+    "nvidia_smi": "name, driver_version, memory.total [MiB]\nNVIDIA H100 80GB HBM3, 535.154.05, 81559 MiB\n"
+  },
+  "dependency_sha256": {
+    "debs": {
+      "libdw-dev_0.190-1.1ubuntu0.1_amd64.deb": "048a3e8444958a013545b7364c5bb339e665fccfd2f504bf5ea62bcaabf575d8",
+      "libdw1t64_0.190-1.1ubuntu0.1_amd64.deb": "edaa9ce4221d95f4bd72a9805100902e313092a2f31a7a51e7186be97734714d",
+      "libelf1t64_0.190-1.1ubuntu0.1_amd64.deb": "b4aee123a37472d213647594b4f7d4a0d13615b0ca2a6fd33926b768d6b232c2",
+      "libelf-dev_0.190-1.1ubuntu0.1_amd64.deb": "81affb95c29f7323f2ae24386aaa1f61d311578e3e27c5f78ef7b7d55cd3cf49"
+    },
+    "wheels": {
+      "quack_kernels-0.6.4-py3-none-any.whl": "e77c5d1f1299b0b38487fe8737df6c6975daa16bca7f7eb883bd1a74d09e7e78",
+      "torch_c_dlpack_ext-0.1.5-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl": "e6f9da4bb9af70e27facc777458be62e10dbbbddda7672d16138db0553c5a524",
+      "nvidia_cutlass_dsl_libs_base-4.6.2-cp312-cp312-manylinux_2_28_x86_64.whl": "24dfaddad6077fd0de14eecaf66a72762f2f5f30ae1872231f5bf8b243ac2eac",
+      "nvidia_cutlass_dsl-4.6.2-py3-none-any.whl": "06ac62deb182a852dfb053032cf945bf02b9aa1bf502a18b129d280d7babb26c",
+      "apache_tvm_ffi-0.1.15.post0-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl": "4f3a55c243bf8498f4f9ca6cf760bdc257077f8fe419056a5c9429c129fc182b",
+      "nvidia_cutlass_dsl_libs_core-4.6.2-py3-none-any.whl": "571d4b46fca1bfbb123d0dc348eaa7fd80af0014ddffc07b849e8195b2364333",
+      "nvidia_cutlass_dsl_libs_cu13-4.6.2-cp312-cp312-manylinux_2_28_x86_64.whl": "a299a623fad75eb752c1a4e447b924e9049ed396b037509c41a48da82d1f340a",
+      "nvidia_cuda_nvdisasm-13.4.92-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": "f35a5b6ddb64b6758c22c0b078c5b6ff6d54f7c240cd74bf131ab5bf13b6c3fe"
+    }
+  },
+  "worker_script_sha256": "9352edb356e322d4046ff2aaccf9c692cf6aa64db673a7b88fb30beb1aadaf67"
+}
