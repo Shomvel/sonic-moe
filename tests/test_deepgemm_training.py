@@ -30,15 +30,17 @@ def metrics(actual, expected):
     return {"rrmse": error.item(), "cosine": cosine.item(), "max_abs": (a-b).abs().max().item() if a.numel() else 0.}
 
 
-def validate_case(precision, *, t=257, bias=False, skew=False, zero_scores=False):
+def validate_case(precision, *, t=257, bias=False, skew=False, zero_scores=False, scatter=True, k=2, signed=False):
     torch.manual_seed(1234)
-    e, d, i, k = 4, 256, 512, 2
+    e, d, i = max(4, k), 256, 512
     x = (torch.randn(t, d, device="cuda", dtype=torch.bfloat16) * .5).requires_grad_()
     w1 = (torch.randn(e, 2*i, d, device="cuda", dtype=torch.bfloat16) / math.sqrt(d)).requires_grad_()
     w2 = (torch.randn(e, d, i, device="cuda", dtype=torch.bfloat16) / math.sqrt(i)).requires_grad_()
     # Strided inputs exercise parameter layouts used by wrappers.
     w1 = w1.transpose(1, 2).contiguous().transpose(1, 2).detach().requires_grad_()
     s = torch.rand(t, k, device="cuda", dtype=torch.float32)
+    if signed:
+        s = s * 2 - 1
     if zero_scores:
         s[:, 0] = 0
         s[::3, 1] = 1e-8
@@ -60,7 +62,7 @@ def validate_case(precision, *, t=257, bias=False, skew=False, zero_scores=False
         saved_shapes.append(list(v.shape))
         return v
     with torch.autograd.graph.saved_tensors_hooks(pack, lambda v: v):
-        out = deepgemm_swiglu(x, w1, w2, s, ids, bias1=b1, bias2=b2, precision=precision)
+        out = deepgemm_swiglu(x, w1, w2, s, ids, bias1=b1, bias2=b2, precision=precision, scatter=scatter)
     do = torch.randn_like(out) * .1
     grads = torch.autograd.grad(out, params, do)
     ref_grads = torch.autograd.grad(ref, ref_params, do.float())
@@ -81,7 +83,7 @@ def validate_case(precision, *, t=257, bias=False, skew=False, zero_scores=False
     assert not t or not any(shape == [saved_shapes[5][0], i] for shape in saved_shapes)
     assert not t or not any(shape == [saved_shapes[5][0], d] for shape in saved_shapes)
     report["saved_shapes"] = saved_shapes
-    report["case"] = dict(precision=precision, t=t, bias=bias, skew=skew, zero_scores=zero_scores)
+    report["case"] = dict(precision=precision, t=t, bias=bias, skew=skew, zero_scores=zero_scores, scatter=scatter, k=k, signed=signed)
     return report
 
 
@@ -120,3 +122,8 @@ def validate_wrapper(precision="bf16"):
 @pytest.mark.parametrize("precision", ["bf16", "fp8"])
 def test_moe_wrapper(precision):
     validate_wrapper(precision)
+
+
+@pytest.mark.parametrize("precision", ["bf16", "fp8"])
+def test_scatter_high_topk(precision):
+    validate_case(precision, k=8, bias=True, skew=True, signed=True)

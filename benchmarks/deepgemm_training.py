@@ -14,7 +14,9 @@ from google.protobuf.internal.api_implementation import Type
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 from test_deepgemm_training import validate_case, validate_wrapper, reference, metrics
-from sonicmoe.deepgemm import deepgemm_swiglu
+from sonicmoe.deepgemm import deepgemm_swiglu, _routing, _combine
+from deep_gemm.sonic_training import GroupedTrainingGemm
+import triton as tr
 
 
 def time_training(fn, params, do, iterations):
@@ -39,6 +41,49 @@ def time_training(fn, params, do, iterations):
             "incremental_peak_bytes": torch.cuda.max_memory_allocated() - initial}
 
 
+def projection_benchmark(iterations):
+    """Isolate the removed D-wide output; inputs/routing are already grouped."""
+    results = []
+    t, d, i, e, k = 32768, 4096, 256, 8, 8
+    ids = torch.arange(e, device="cuda").expand(t, e).contiguous()
+    layout, rowmap, inverse = _routing(ids, e)
+    a = torch.randn(layout.rows, i, device="cuda", dtype=torch.bfloat16) * .1
+    w = torch.randn(e, d, i, device="cuda", dtype=torch.bfloat16) / math.sqrt(i)
+    scores = torch.rand(t, k, device="cuda", dtype=torch.float32) / k
+    for precision in ("bf16", "fp8"):
+        gemms = GroupedTrainingGemm(layout, precision)
+        def materialize():
+            y = gemms.m_gemm(a, w)
+            out = torch.empty((t,d),device="cuda",dtype=torch.bfloat16)
+            _combine[(t,tr.cdiv(d,256))](y,inverse,scores,ids,None,out,d,k,256,True,False)
+            return out
+        def scatter():
+            return gemms.m_gemm_scatter(a,w,rowmap,t,k,scores)
+        old, new = materialize(), scatter()
+        check = metrics(new,old)
+        assert check["rrmse"] < .01, check
+        del old,new
+        for name, fn in (("materialize",materialize),("scatter",scatter)):
+            for _ in range(2): fn()
+            torch.cuda.synchronize()
+            initial = torch.cuda.memory_allocated()
+            torch.cuda.reset_peak_memory_stats()
+            samples=[]
+            for _ in range(3):
+                start,end = torch.cuda.Event(enable_timing=True),torch.cuda.Event(enable_timing=True)
+                start.record()
+                for _ in range(iterations): fn()
+                end.record(); end.synchronize()
+                samples.append(start.elapsed_time(end)/iterations)
+            value=dict(mode=name,precision=precision,t=t,d=d,i=i,e=e,k=k,rows=layout.rows,
+                       samples_ms=samples,median_ms=statistics.median(samples),comparison=check,
+                       incremental_peak_bytes=torch.cuda.max_memory_allocated()-initial,
+                       theoretical_y_bytes=layout.rows*d*2,theoretical_acc_bytes=t*d*4)
+            print("PROJECTION",json.dumps(value),flush=True)
+            results.append(value)
+    return results
+
+
 def run(output, iterations):
     output.mkdir(parents=True, exist_ok=True)
     report = {"environment": {"python": sys.version, "torch": torch.__version__, "cuda": torch.version.cuda,
@@ -56,7 +101,9 @@ def run(output, iterations):
         (output / "results.json").write_text(json.dumps(report, indent=2))
     save()
     for precision in ("bf16", "fp8"):
-        for options in ({}, {"bias": True, "skew": True, "zero_scores": True}, {"t": 0}):
+        for options in ({}, {"bias": True, "skew": True, "zero_scores": True}, {"t": 0},
+                        {"k": 8, "bias": True, "skew": True, "signed": True},
+                        {"scatter": False, "bias": True, "zero_scores": True}):
             print("NUMERICAL", precision, options, flush=True)
             value = validate_case(precision, **options)
             report["numerical"].append(value)
@@ -97,7 +144,7 @@ def run(output, iterations):
     from sonicmoe.enums import ActivationType
     report["wrapper"] = {mode:validate_wrapper(mode) for mode in ("bf16", "fp8")}
     save()
-    for t,d,i,e,k in ((512,256,512,4,2),(2048,1024,2048,8,2),(4096,4096,2048,8,2)):
+    for t,d,i,e,k in ((512,256,512,4,2),(2048,1024,2048,8,2),(4096,4096,2048,8,2),(4096,4096,512,8,8)):
         torch.manual_seed(11)
         x = torch.randn(t,d,device="cuda",dtype=torch.bfloat16,requires_grad=True)
         w1 = (torch.randn(e,2*i,d,device="cuda",dtype=torch.bfloat16)/math.sqrt(d)).requires_grad_()
@@ -113,8 +160,10 @@ def run(output, iterations):
                 x=x, router_scores=scores.flatten(), token_indices=token_ids, expert_indices=ids.flatten(),
                 w1=w1.permute(1,2,0), b1=None, w2=w2.permute(1,2,0), b2=None, E=e,
                 stream_id=torch.cuda.current_stream().cuda_stream, activation_type=ActivationType.SWIGLU)[0],
-            "deepgemm_bf16":lambda:deepgemm_swiglu(x,w1,w2,scores,ids,precision="bf16"),
-            "deepgemm_fp8":lambda:deepgemm_swiglu(x,w1,w2,scores,ids,precision="fp8"),
+            "materialize_bf16":lambda:deepgemm_swiglu(x,w1,w2,scores,ids,precision="bf16",scatter=False),
+            "materialize_fp8":lambda:deepgemm_swiglu(x,w1,w2,scores,ids,precision="fp8",scatter=False),
+            "scatter_bf16":lambda:deepgemm_swiglu(x,w1,w2,scores,ids,precision="bf16"),
+            "scatter_fp8":lambda:deepgemm_swiglu(x,w1,w2,scores,ids,precision="fp8"),
         }
         # Original Sonic is also checked against the same expression before timing.
         ref = reference(x,w1,w2,scores,ids)
@@ -132,6 +181,7 @@ def run(output, iterations):
             report["benchmarks"].append(value)
             save()
             print(json.dumps(value),flush=True)
+    report["projection"] = projection_benchmark(iterations)
     report["passed"] = True
     save()
     print("ACCEPTANCE PASSED",flush=True)

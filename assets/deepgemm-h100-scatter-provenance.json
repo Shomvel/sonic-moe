@@ -1,0 +1,115 @@
+{
+  "date": "2026-10-23",
+  "revision": "scatter-r3",
+  "sources": {
+    "DeepGEMM": {
+      "base": "b068ce6b2a526613f73040ee51f34617274377e9",
+      "tested_files": {
+        "csrc/apis/gemm.hpp": "b0e6d9a8f0c29ec798977c0a9b89a7a09eab8a28e59d99c4888ea4b56a1705c3",
+        "csrc/jit_kernels/impls/sm90_bf16_gemm.hpp": "7e48fdc535f1b3c3214e55b473fcbaa87d5b0aa8cc09b05e4779a3b921e2e13b",
+        "csrc/jit_kernels/impls/sm90_fp8_gemm_1d2d.hpp": "663eaa777ff4529f4ccf7579ce092a91732ec963e4074efc99e6cb4d82218ec9",
+        "deep_gemm/__init__.py": "1fd8e53bfec7673f6c6643d077e6569e4b102ff329eeb8a28e7a8714a9548776",
+        "deep_gemm/include/deep_gemm/impls/sm90_bf16_gemm.cuh": "de0310696fdb70db51a7d44dc754c8120c0598ef0d739a5d44119cc8d50cac91",
+        "deep_gemm/include/deep_gemm/impls/sm90_fp8_gemm_1d2d.cuh": "6332c0da53ad7cb54190f3ab55ccfe52de98b9bbfb226c02575b28d1f68ec943",
+        "deep_gemm/sonic_training.py": "f77dda0edda2f0fea54163021cfa1b64b8faf0d3cfc2c9264d6ed6ed9e10eac2",
+        "docs/sonic-hopper-training.md": "ac4645ebca11da3c8137146c82ed94c821f244eb567f7e81eb32cf741727f9dd",
+        "setup.py": "7c858cb7f6bd8d2b3c129243949a534d735ecc7ec1ae9c20714db6cbe5f01c59",
+        "tests/test_sonic_training.py": "ae973e803ba5fd3b4b0d6ec0eb644df9227aafcbecf328b7894507561bdd2916",
+        "csrc/jit_kernels/impls/sm90_scatter.hpp": "6be2432f6e76cb7d824bb5846af616af82bd674966b411bdc9017ec023830afc",
+        "deep_gemm/include/deep_gemm/epilogue/sm90_scatter.cuh": "db8c8b8163c34110e61a4ad227342a857627b6be78bb7be560196803ed6a6fbc"
+      }
+    },
+    "sonic-moe": {
+      "base": "57f1c95257e5b86e647b8608fc84106fcc29e02d",
+      "tested_files": {
+        "assets/deepgemm-hopper-training.md": "3e030a004c46b1c4450bbb41246276d0c18222dfb9c21e7c737d71aaea8f372b",
+        "benchmarks/deepgemm_training.py": "6dfc5c4d0f073d295fdc95049c8f2ab79e19a184a5fa6f404156900e9ac8d305",
+        "sonicmoe/deepgemm.py": "44dba4cdca1cef3c2d6bcd5fc34a1324f53a3de46582724a1abd9637392c18bc",
+        "tests/test_deepgemm_training.py": "a295531d7ea595b5b4cc10de1eb930b93d37090ff3983121a45249e6491e77b3"
+      }
+    }
+  },
+  "submodules": " f3fde58372d33e9a5650ba7b80fc48b3b49d40c8 third-party/cutlass (v4.2.1)\n 2efdab421e1cfb17fe8bc20e11ca72aa6d0e6c43 third-party/deep_jit (2efdab4)\n",
+  "image": "harbor.local.clusters/bp/weaver-trainer-slim:sonicmoe-exp-20261023-r3@sha256:313bd046ab3e72cc6be80abea7baefd1845160020a638db74f489d5975bf308d",
+  "resources": {
+    "gpus": 1,
+    "cpus": 8,
+    "ram_gib": 96,
+    "shm_gib": 8,
+    "deadline_seconds": 3600
+  },
+  "runtime": {
+    "python": "3.12.3 (main, Aug 14 2025, 17:47:21) [GCC 13.3.0]",
+    "torch": "2.10.0a0+b558c986e8.nv25.11",
+    "cuda": "13.0",
+    "protobuf": "6.33.5",
+    "protobuf_backend": "upb",
+    "gpu": "NVIDIA H100 80GB HBM3",
+    "capability": [
+      9,
+      0
+    ],
+    "nvidia_smi": "name, driver_version, memory.total [MiB]\nNVIDIA H100 80GB HBM3, 535.154.05, 81559 MiB\n"
+  },
+  "imports": {
+    "cutlass": "/gpfs/users/linlizhi/sonic-deepgemm-hopper-20261023/venv-scatter-r3/lib/python3.12/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/__init__.py",
+    "cute_tensor": "/gpfs/users/linlizhi/sonic-deepgemm-hopper-20261023/venv-scatter-r3/lib/python3.12/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/cute/tensor.py",
+    "quack": "/gpfs/users/linlizhi/sonic-deepgemm-hopper-20261023/venv-scatter-r3/lib/python3.12/site-packages/quack/__init__.py"
+  },
+  "terminal": [
+    {
+      "name": "job-b5b45e791327-20261023100805",
+      "user_def_name": "sonic-deepgemm-hopper-20261023-scatter-r3",
+      "status": "Completed",
+      "ready_status": "0/1",
+      "namespace": "qiji",
+      "job_creator": "linlizhi",
+      "user_gpu": 1
+    }
+  ],
+  "exit_code": 0,
+  "deletion": {
+    "name": "job-b5b45e791327-20261023100805",
+    "alias": "sonic-deepgemm-hopper-20261023-scatter-r3",
+    "response": {
+      "success": true
+    }
+  },
+  "cleanup": [],
+  "extension_sha256": {
+    "/gpfs/users/linlizhi/sonic-deepgemm-hopper-20261023/venv-scatter-r3/lib/python3.12/site-packages/deep_gemm/_C.cpython-312-x86_64-linux-gnu.so": "d6bdaee4dcedc2c0450788e0c4714fba08c8a5e6938ee8aa1a40716eafd90aa1"
+  },
+  "verified_source_counts": {
+    "DeepGEMM": 136,
+    "sonic-moe": 86
+  },
+  "artifact_sha256": {
+    "scatter-r3/results.json": "c8d8e5a92ea4687a4e16a50a6b14ccd9f6499b51c9650d5265ecbba5d55319c6",
+    "worker-scatter-r3.log": "2e48f0c2abcf7bae580e7f6feff76aaadd76b94696b697d3b8ad37c1bbc6960e",
+    "source-scatter-r3.json": "064d3831c948f42ea91f54e1cc25682594804a36bc220b94432b89f1b6bc820b",
+    "adapters-scatter-r3.json": "d10625ee7d2e85b12b4f12267e36061eeb5e3aae60ee9f5c95b5024ff9ffe5c8",
+    "artifact-hashes-scatter-r3.json": "11e849adea596fb482f157f3efcec6566e45668a29c21696ff8c807c37d54eee"
+  },
+  "failures": [
+    {
+      "revision": "scatter-r1",
+      "reason": "stale native object because setuptools did not track included API headers; fixed depends and clean build"
+    },
+    {
+      "revision": "scatter-r2",
+      "reason": "FP8 scale-layout recipe temporary did not match mutable optional reference; fixed named optional"
+    }
+  ],
+  "validation": {
+    "numerical_cases": 10,
+    "training_steps_per_mode": 20,
+    "whole_layer_records": 20,
+    "projection_records": 4,
+    "passed": true
+  },
+  "notes": [
+    "Source hashes identify the executed snapshot; documentation/results were added after testing.",
+    "No throughput or long-run convergence claim. Only H100 was executed."
+  ],
+  "published_deepgemm_commit": "deaf34ddb6436dd4ac344abf2431780cc3410f2d"
+}

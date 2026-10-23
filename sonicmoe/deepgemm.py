@@ -3,7 +3,7 @@
 Public expert weights use [E,output,input]. Routing is fixed top-k: padding never
 adds or drops a route. The only host synchronization copies E route counts, which
 SM90 DeepGEMM's K-grouped launch currently requires. Saved activations are X and
-BF16 preactivations H; A and expert outputs Y are recomputed / temporary.
+BF16 preactivations H; A is recomputed and output GEMMs scatter directly to tokens.
 """
 import torch
 import triton as tr
@@ -121,7 +121,7 @@ def _routing(ids, experts):
 
 class _DeepGemmSwiGLU(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x, w1, w2, scores, ids, b1, b2, precision):
+    def forward(ctx, x, w1, w2, scores, ids, b1, b2, precision, scatter):
         from deep_gemm.sonic_training import GroupedTrainingGemm
         layout, rowmap, inverse = _routing(ids, w1.size(0))
         gemms = GroupedTrainingGemm(layout, precision)
@@ -130,11 +130,15 @@ class _DeepGemmSwiGLU(torch.autograd.Function):
         a = torch.empty((layout.rows, w2.size(2)), device=x.device, dtype=x.dtype)
         if layout.rows:
             _act[(layout.rows,)](h, a, b1, layout.m_indices, rowmap, a.size(1), tr.next_power_of_2(a.size(1)), b1 is not None)
-        y = gemms.m_gemm(a, w2)
-        out = torch.empty_like(x)
-        if x.size(0):
-            _combine[(x.size(0), tr.cdiv(x.size(1), 256))](
-                y, inverse, scores, ids, b2, out, x.size(1), ids.size(1), 256, True, b2 is not None)
+        if scatter:
+            out = gemms.m_gemm_scatter(a, w2, rowmap, x.size(0), ids.size(1), scores, b2)
+        else:
+            y = gemms.m_gemm(a, w2)
+            out = torch.empty_like(x)
+            if x.size(0):
+                _combine[(x.size(0), tr.cdiv(x.size(1), 256))](
+                    y, inverse, scores, ids, b2, out, x.size(1), ids.size(1), 256, True, b2 is not None)
+        ctx.scatter = scatter
         ctx.save_for_backward(x, w1, w2, scores, ids, h, rowmap, inverse, b1, b2)
         ctx.gemms = gemms
         return out
@@ -156,12 +160,16 @@ class _DeepGemmSwiGLU(torch.autograd.Function):
             _bias_router_grad[(ids.numel(),)](dout, b2, ids, ds, d, topk, tr.next_power_of_2(d))
         dw2 = gemms.wgrad(dop, ap)
         del u, ap
-        dxp = gemms.m_gemm(dh, w1.transpose(1, 2))
+        if ctx.scatter:
+            dx = gemms.m_gemm_scatter(dh, w1.transpose(1, 2), rowmap, x.size(0), topk)
+        else:
+            dxp = gemms.m_gemm(dh, w1.transpose(1, 2))
         xp = _gather_rows(x, rowmap, topk)
         dw1 = gemms.wgrad(dh, xp)
-        dx = torch.empty_like(x)
-        if x.size(0):
-            _combine[(x.size(0), tr.cdiv(d, 256))](dxp, inverse, scores, ids, None, dx, d, topk, 256, False, False)
+        if not ctx.scatter:
+            dx = torch.empty_like(x)
+            if x.size(0):
+                _combine[(x.size(0), tr.cdiv(d, 256))](dxp, inverse, scores, ids, None, dx, d, topk, 256, False, False)
         db1 = db2 = None
         if b1 is not None:
             db1 = torch.zeros_like(b1, dtype=torch.float32)
@@ -171,15 +179,17 @@ class _DeepGemmSwiGLU(torch.autograd.Function):
             route_dout = dout.repeat_interleave(topk, dim=0).float() * scores.flatten()[:, None]
             db2 = torch.zeros_like(b2, dtype=torch.float32)
             db2.index_add_(0, ids.flatten().long(), route_dout)
-        return dx, dw1.to(w1.dtype), dw2.to(w2.dtype), ds.to(scores.dtype), None, db1, db2, None
+        return dx, dw1.to(w1.dtype), dw2.to(w2.dtype), ds.to(scores.dtype), None, db1, db2, None, None
 
 
-def deepgemm_swiglu(x, w1, w2, scores, expert_ids, *, bias1=None, bias2=None, precision="bf16"):
+def deepgemm_swiglu(x, w1, w2, scores, expert_ids, *, bias1=None, bias2=None, precision="bf16", scatter=True):
     """Fixed top-k SwiGLU MoE, including gradients of X/W1/W2/scores/biases.
 
     X [T,D], W1 [E,2I,D] (gate/up interleaved), W2 [E,D,I], scores/IDs [T,K].
     BF16 tensors, FP32/BF16 scores, D/I divisible by 128; SM90 only. FP8 mode
     requantizes all GEMM operands (also wgrad) and uses straight-through gradients.
+    scatter=True fuses FP32 atomic token reduction into the two output GEMMs.
+    scatter=False retains materialized outputs for comparison. Atomics are nondeterministic.
     Routing counts require a host sync; CUDA graph capture and higher gradients
     are intentionally unsupported in this first implementation.
     """
@@ -206,4 +216,4 @@ def deepgemm_swiglu(x, w1, w2, scores, expert_ids, *, bias1=None, bias2=None, pr
     with torch.cuda.device(x.device):
         return _DeepGemmSwiGLU.apply(x.contiguous(), w1, w2, scores.contiguous(), expert_ids.contiguous(),
                                     None if bias1 is None else bias1.contiguous(),
-                                    None if bias2 is None else bias2.contiguous(), precision)
+                                    None if bias2 is None else bias2.contiguous(), precision, scatter)
