@@ -209,7 +209,13 @@ class MoE(nn.Module):
         hidden_states: torch.Tensor,
         kernel_backend_moe: KernelBackendMoE = KernelBackendMoE.sonicmoe,
         is_inference_mode: bool = False,
+        *,
+        recompute_dh: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        if not isinstance(recompute_dh, bool):
+            raise ValueError("recompute_dh must be a boolean")
+        if recompute_dh and kernel_backend_moe != KernelBackendMoE.deepgemm_fp8:
+            raise ValueError("recompute_dh requires the deepgemm_fp8 backend")
         original_shape = hidden_states.shape
 
         # hidden_states -> (batch_size, query_length, hidden_size)
@@ -241,6 +247,7 @@ class MoE(nn.Module):
                 router_weights,
                 selected_experts,
                 kernel_backend_moe=kernel_backend_moe,
+                recompute_dh=recompute_dh,
             )
 
         hidden_states = hidden_states.view(original_shape)
@@ -296,6 +303,7 @@ class MoE(nn.Module):
         router_weights: torch.Tensor,
         selected_experts: torch.Tensor,
         kernel_backend_moe: KernelBackendMoE,
+        recompute_dh: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if kernel_backend_moe in (KernelBackendMoE.deepgemm_bf16, KernelBackendMoE.deepgemm_fp8):
             from .deepgemm import deepgemm_swiglu
@@ -307,6 +315,7 @@ class MoE(nn.Module):
                 router_weights, selected_experts,
                 bias1=self.c_fc.bias, bias2=self.c_proj.bias,
                 precision="fp8" if kernel_backend_moe == KernelBackendMoE.deepgemm_fp8 else "bf16",
+                recompute_dh=recompute_dh,
             )
             frequency = selected_experts.flatten().bincount(minlength=self.num_experts).to(torch.int32)
             return output, frequency
